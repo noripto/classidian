@@ -18,13 +18,13 @@ Search for **Pigeonhole** in **Settings → Community plugins → Browse**, or o
 1. Get an API key at [console.typesafe.ai/keys](https://console.typesafe.ai/keys).
 2. Open **Settings → Pigeonhole** and paste it into **TypeSafe API key**.
 
-That is the whole setup. 
+That is the whole setup.
 
 The folders already in your vault are the candidates, so a note about work goes to `work/`, and one about a project goes to `work/that-project/`.
 
 A fresh install starts with three example attributes (`meeting`, `idea`, `reference`). Edit them, or delete them and let your own folders do the work.
 
-Attributes are optional. Add one when you want to describe a category in your own words, or to file notes into a folder that does not exist yet. Press **Add attribute** at the bottom of the settings screen; each attribute takes three fields:
+Attributes are optional. Add one when you want to describe a category in your own words, or to file notes into a folder that does not exist yet. Press **Add attribute** at the bottom of the settings screen to add an entry to the list, then open it and fill in three fields:
 
 
 | Field         | Meaning                                                                                                                       |
@@ -36,7 +36,7 @@ Attributes are optional. Add one when you want to describe a category in your ow
 
 An attribute takes precedence over a vault folder with the same path.
 
-To sort more finely, press the **+** button on an attribute to give it sub-attributes. Pigeonhole then asks twice: first which attribute the note matches, then which of that attribute's sub-attributes fits. A sub-attribute's target folder is relative to its parent's, so `review` under `game` means `game/review`. Leave it empty to use the parent's folder itself.
+To sort more finely, open an attribute and press **Add sub-attribute**. Pigeonhole then asks twice: first which attribute the note matches, then which of that attribute's sub-attributes fits. A sub-attribute's target folder is relative to its parent's, so `review` under `game` means `game/review`. Leave it empty to use the parent's folder itself.
 
 ## Usage
 
@@ -52,7 +52,7 @@ Right-click a note or a folder in the file explorer and pick **Pigeonhole**, or 
 
 For each note, Pigeonhole picks one folder or attribute, writes it to frontmatter as `category: meeting`, and moves the file there. A nested destination is split across the two properties, so `work/beacon` is written as `category: work` and `subcategory: beacon`. Links to the note are updated by Obsidian, so nothing breaks. If a note with the same name is already in the target folder, a number is appended, the way Obsidian names new notes.
 
-The note is left where it is when the model is unsure, or when none of your attributes fit. A notice tells you why. When only the sub-attribute is uncertain, the note is filed under its parent attribute. Notes that already have the property are treated as classified and are skipped by the two bulk commands.
+The note is left where it is when the model is unsure, or when none of your attributes fit. The reason is shown after the run. When only the sub-attribute is uncertain, the note is filed under its parent attribute. Notes that already have the property are treated as classified and are skipped by the two bulk commands.
 
 ## Settings
 
@@ -103,7 +103,7 @@ Vault にあるフォルダがそのまま候補になるので、仕事のノ�
 
 初回は例として属性が3件（`meeting` / `idea` / `reference`）入っている。書き換えて使ってもいいし、消して既存フォルダに任せてもいい。
 
-属性の登録は任意。自分の言葉で分類を説明したいとき、またはまだ存在しないフォルダへ振り分けたいときに使う。設定画面の下にある **属性を追加** を押すと、1件につき3つの項目がある。
+属性の登録は任意。自分の言葉で分類を説明したいとき、またはまだ存在しないフォルダへ振り分けたいときに使う。設定画面の下にある **属性を追加** を押すと一覧に項目が増えるので、開いて次の3つを入力する。
 
 
 | 項目      | 意味                                              |
@@ -115,7 +115,7 @@ Vault にあるフォルダがそのまま候補になるので、仕事のノ�
 
 同じパスの Vault フォルダと属性が重なった場合は、属性が優先される。
 
-さらに細かく分けたい場合は、属性の行にある **+** ボタンで子属性を追加する。判定は2段階になり、まずどの属性に当たるかを選び、次にその属性の子属性のどれに当たるかを選ぶ。子属性の移動先は親からの相対パスで、`game` の下の `review` は `game/review` になる。空にすると親の移動先そのものを使う。
+さらに細かく分けたい場合は、属性を開いて **子属性を追加** を押す。判定は2段階になり、まずどの属性に当たるかを選び、次にその属性の子属性のどれに当たるかを選ぶ。子属性の移動先は親からの相対パスで、`game` の下の `review` は `game/review` になる。空にすると親の移動先そのものを使う。
 
 ## 使い方
 
@@ -131,7 +131,7 @@ Vault にあるフォルダがそのまま候補になるので、仕事のノ�
 
 各ノートについてフォルダまたは属性を1つ選び、frontmatter に `category: meeting` のように書き込んでから、そこへ移動する。階層のある移動先は2つのプロパティに分けて書かれる。`work/beacon` なら `category: work` と `subcategory: beacon` になる。ノートへのリンクは Obsidian が追従するので壊れない。移動先に同名のノートがある場合は、Obsidian と同じように連番が付く。
 
-モデルが判断に迷った場合や、どの属性にも当てはまらない場合、ノートは動かさない。理由は通知に表示される。子属性の判定だけが不確かなときは、親の属性として振り分ける。すでに属性が入っているノートは分類済みとみなし、一括コマンドの対象から外れる。
+モデルが判断に迷った場合や、どの属性にも当てはまらない場合、ノートは動かさない。理由は実行後に表示される。子属性の判定だけが不確かなときは、親の属性として振り分ける。すでに属性が入っているノートは分類済みとみなし、一括コマンドの対象から外れる。
 
 ## 設定
 

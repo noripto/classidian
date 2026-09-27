@@ -23,8 +23,13 @@ import {
   type Decision,
 } from "./classify.ts";
 import { msg } from "./i18n.ts";
+import { RESULT_VIEW, ResultView, type RunResult } from "./result-view.ts";
 
 const API_URL = "https://api.typesafe.ai/v1/systemone";
+
+const SECRET_ID = "pigeonhole-api-key";
+
+type Mode = "single" | "bulk" | "auto";
 
 const named = (cats: Category[]) => cats.filter((c) => c.name !== "");
 
@@ -53,7 +58,6 @@ const joinFolder = (parent: string, child: string) =>
   parent === "" || child === "" ? parent || child : `${parent}/${child}`;
 
 type PigeonholeSettings = {
-  apiKey: string;
   categories: Category[];
   propertyName: string;
   subPropertyName: string;
@@ -65,7 +69,6 @@ type PigeonholeSettings = {
 };
 
 const DEFAULT_SETTINGS: PigeonholeSettings = {
-  apiKey: "",
   categories: [],
   propertyName: "category",
   subPropertyName: "subcategory",
@@ -79,19 +82,29 @@ const DEFAULT_SETTINGS: PigeonholeSettings = {
 export default class PigeonholePlugin extends Plugin {
   settings: PigeonholeSettings = DEFAULT_SETTINGS;
 
+  private lastResult: RunResult | null = null;
+
   private pending = new Set<string>();
 
   private flushPending = debounce(() => void this.drain(), 10000, true);
 
   async onload() {
-    const saved = (await this.loadData()) as Partial<PigeonholeSettings> | null;
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    const saved = (await this.loadData()) as
+      | (Partial<PigeonholeSettings> & { apiKey?: string })
+      | null;
+    const { apiKey: legacyKey, ...rest } = saved ?? {};
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, rest);
+    if (legacyKey) {
+      this.app.secretStorage.setSecret(SECRET_ID, legacyKey);
+      await this.saveSettings();
+    }
     if (saved === null) {
       this.settings.categories = DEFAULT_CATEGORIES;
       await this.saveSettings();
       new Notice(`Pigeonhole: ${msg.defaultsAdded}`);
     }
     this.addSettingTab(new PigeonholeSettingTab(this.app, this));
+    this.registerView(RESULT_VIEW, (leaf) => new ResultView(leaf, () => this.lastResult));
 
     this.addCommand({
       id: "classify-current-note",
@@ -102,7 +115,7 @@ export default class PigeonholePlugin extends Plugin {
           new Notice(`Pigeonhole: ${msg.needMarkdown}`);
           return;
         }
-        void this.run([file]);
+        void this.run([file], "single");
       },
     });
 
@@ -115,22 +128,28 @@ export default class PigeonholePlugin extends Plugin {
           new Notice(`Pigeonhole: ${msg.noFolder}`);
           return;
         }
-        void this.run(this.unclassifiedIn(parent));
+        void this.run(this.unclassifiedIn(parent), "bulk");
       },
+    });
+
+    this.addCommand({
+      id: "show-result",
+      name: msg.cmdResult,
+      callback: () => void this.showResult(),
     });
 
     this.addCommand({
       id: "classify-vault",
       name: msg.cmdVault,
-      callback: () => void this.run(this.unclassifiedIn(this.app.vault.getRoot())),
+      callback: () => void this.run(this.unclassifiedIn(this.app.vault.getRoot()), "bulk"),
     });
 
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
         if (file instanceof TFolder) {
-          this.addMenuItem(menu, msg.cmdFolder, () => this.unclassifiedIn(file));
+          this.addMenuItem(menu, msg.cmdFolder, "bulk", () => this.unclassifiedIn(file));
         } else if (file instanceof TFile && file.extension === "md") {
-          this.addMenuItem(menu, msg.cmdNote, () => [file]);
+          this.addMenuItem(menu, msg.cmdNote, "single", () => [file]);
         }
       }),
     );
@@ -151,13 +170,21 @@ export default class PigeonholePlugin extends Plugin {
     );
   }
 
-  private addMenuItem(menu: Menu, title: string, files: () => TFile[]) {
+  private addMenuItem(menu: Menu, title: string, mode: Mode, files: () => TFile[]) {
     menu.addItem((item) =>
       item
         .setTitle(`Pigeonhole: ${title}`)
         .setIcon("inbox")
-        .onClick(() => void this.run(files())),
+        .onClick(() => void this.run(files(), mode)),
     );
+  }
+
+  apiKey(): string {
+    return this.app.secretStorage.getSecret(SECRET_ID) ?? "";
+  }
+
+  setApiKey(value: string) {
+    this.app.secretStorage.setSecret(SECRET_ID, value);
   }
 
   async saveSettings() {
@@ -220,11 +247,11 @@ export default class PigeonholePlugin extends Plugin {
       this.pending.delete(path);
       files.push(f);
     }
-    if (files.length > 0) await this.run(files, true);
+    if (files.length > 0) await this.run(files, "auto");
   }
 
-  private async run(files: TFile[], quiet = false) {
-    if (!this.settings.apiKey) {
+  private async run(files: TFile[], mode: Mode) {
+    if (!this.apiKey()) {
       new Notice(`Pigeonhole: ${msg.noApiKey}`);
       return;
     }
@@ -234,38 +261,64 @@ export default class PigeonholePlugin extends Plugin {
       return;
     }
     if (files.length === 0) {
-      if (!quiet) new Notice(`Pigeonhole: ${msg.nothingToDo}`);
+      if (mode !== "auto") new Notice(`Pigeonhole: ${msg.nothingToDo}`);
       return;
     }
 
-    const single = files.length === 1;
+    const single = mode === "single";
     const notice = new Notice(`Pigeonhole: ${msg.working}`, 0);
-    let moved = 0;
-    let skipped = 0;
-    let failed = 0;
+    const result: RunResult = { moved: [], tagged: [], skipped: [], failed: [] };
 
     try {
       for (let i = 0; i < files.length; i++) {
         if (!single) notice.setMessage(`Pigeonhole: ${i + 1}/${files.length} ${files[i].basename}`);
         try {
-          const result = await this.classifyFile(files[i], categories);
-          if (result.action === "move") moved++;
-          else {
-            skipped++;
-            if (single) new Notice(`Pigeonhole: ${msg.notMoved(msg.skip(result.reason))}`);
+          const from = files[i].path;
+          const fromFolder = files[i].parent?.path ?? "/";
+          const decision = await this.classifyFile(files[i], categories);
+          if (decision.action === "move") {
+            if (files[i].path !== from) {
+              result.moved.push({
+                path: files[i].path,
+                from: fromFolder,
+                to: files[i].parent?.path ?? "/",
+              });
+            } else {
+              result.tagged.push({ path: from, name: decision.category.name });
+            }
+          } else {
+            const reason = msg.skip(decision.reason);
+            result.skipped.push({ path: files[i].path, reason });
+            if (single) new Notice(`Pigeonhole: ${msg.notMoved(reason)}`);
           }
         } catch (e) {
-          failed++;
+          const error = (e as Error).message;
+          result.failed.push({ path: files[i].path, error });
           console.error("Pigeonhole:", files[i].path, e);
-          if (single) new Notice(`Pigeonhole: ${(e as Error).message}`);
+          if (single) new Notice(`Pigeonhole: ${error}`);
         }
       }
     } finally {
       notice.hide();
     }
 
-    if (moved === 0 && (single || quiet)) return;
-    new Notice(`Pigeonhole: ${msg.summary(moved, skipped, failed)}`);
+    this.lastResult = result;
+    if (mode === "bulk") {
+      await this.showResult();
+      return;
+    }
+    if (result.moved.length === 0) return;
+    new Notice(
+      `Pigeonhole: ${msg.summary(result.moved.length, result.skipped.length, result.failed.length)}`,
+    );
+  }
+
+  private async showResult() {
+    const { workspace } = this.app;
+    const leaf = workspace.getLeavesOfType(RESULT_VIEW)[0] ?? workspace.getLeaf("tab");
+    await leaf.setViewState({ type: RESULT_VIEW, active: true });
+    await workspace.revealLeaf(leaf);
+    if (leaf.view instanceof ResultView) await leaf.view.render();
   }
 
   private async ask(body: object): Promise<ChoiceAnswer | undefined> {
@@ -273,7 +326,7 @@ export default class PigeonholePlugin extends Plugin {
       url: API_URL,
       method: "POST",
       headers: {
-        Authorization: `Bearer ${this.settings.apiKey}`,
+        Authorization: `Bearer ${this.apiKey()}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
@@ -425,12 +478,17 @@ class PigeonholeSettingTab extends PluginSettingTab {
   }
 
   getControlValue(key: string): unknown {
+    if (key === "apiKey") return this.plugin.apiKey();
     if (key === "excludePaths") return this.plugin.settings.excludePaths.join("\n");
     return resolve(this.plugin.settings, key);
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
     const s = this.plugin.settings;
+    if (key === "apiKey") {
+      this.plugin.setApiKey(String(value).trim());
+      return;
+    }
     if (key === "excludePaths") {
       s.excludePaths = String(value)
         .split("\n")
